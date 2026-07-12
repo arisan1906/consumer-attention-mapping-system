@@ -20,7 +20,8 @@ class ZonePayload(BaseModel):
     y_max: float
 
 class ShelfPayload(BaseModel):
-    zone_name: str
+    zone_name: Optional[str] = None
+    zone_id: Optional[str] = None
     name: str
     x_min: float
     y_min: float
@@ -63,15 +64,21 @@ async def get_store_layout(store_id: str, current_user: dict = Depends(get_curre
     try:
         # Fetch zones
         zones_res = supabase.table("zones").select("*").eq("store_id", store_id).execute()
-        # Fetch shelves
-        shelves_res = supabase.table("shelves").select("*").eq("store_id", store_id).execute()
+        # Fetch shelves joined with zone name
+        shelves_res = supabase.table("shelves").select("*, zones(name)").eq("store_id", store_id).execute()
         # Fetch cameras
         cameras_res = supabase.table("cameras").select("*").eq("store_id", store_id).execute()
         
+        shelves_data = []
+        for s in shelves_res.data:
+            z_info = s.pop("zones", None)
+            s["zone_name"] = z_info["name"] if (z_info and isinstance(z_info, dict)) else "Default Zone"
+            shelves_data.append(s)
+            
         return {
             "store_id": store_id,
             "zones": zones_res.data,
-            "shelves": shelves_res.data,
+            "shelves": shelves_data,
             "cameras": cameras_res.data
         }
     except Exception as e:
@@ -105,7 +112,10 @@ async def save_store_layout(
                 
         # 3. Insert new shelves
         for s in payload.shelves:
-            zone_id = inserted_zones.get(s.zone_name)
+            zone_id = None
+            if s.zone_name:
+                zone_id = inserted_zones.get(s.zone_name)
+            
             if not zone_id:
                 # If zone not found, assign to first inserted zone or create a default zone
                 if inserted_zones:
